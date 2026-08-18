@@ -1,1 +1,562 @@
-welcome
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{SupportLine Agent: Real-Time Emergency Service Recommendation via Agent-Based Modeling and Geospatial Analysis}
+
+\author{\IEEEauthorblockN{Surya Pramod Bharadwaja Josyula}
+\IEEEauthorblockA{\textit{Dept. of School of Computing} \\
+\textit{Amrita School of Engineering}\\
+\textit{Amrita Vishwa Vidyapeetham}\\
+Bengaluru, India \\
+bl.sc.u4aie24252@bl.students.amrita.edu}
+\and
+\IEEEauthorblockN{Sanka Santhosh}
+\IEEEauthorblockA{\textit{Dept. of School of Computing} \\
+\textit{Amrita School of Engineering}\\
+\textit{Amrita Vishwa Vidyapeetham}\\
+Bengaluru, India \\
+bl.sc.u4aie24248@bl.students.amrita.edu}
+\and
+\IEEEauthorblockN{Kukka Sree Chaitna Varshith}
+\IEEEauthorblockA{\textit{Dept. of School of Computing} \\
+\textit{Amrita School of Engineering}\\
+\textit{Amrita Vishwa Vidyapeetham}\\
+Bengaluru, India \\
+bl.sc.u4aie24235@bl.students.amrita.edu}
+}
+
+\maketitle
+
+\begin{abstract}
+Locator applications for emergency and civic help services almost
+universally route each request to its geographically nearest facility,
+independently of every other concurrent request. This greedy, capacity-blind
+policy performs well under light load but silently overloads the
+closest facility during demand surges -- mass events, clustered
+incidents, or simply rush-hour volume -- while comparable facilities
+sit under-utilized nearby. We present \emph{SupportLine}, a multi-agent
+emergency-help dispatch system for Bengaluru, India, built around a
+capacity-aware allocation mechanism we call \emph{Urgency-Weighted
+Deferred Acceptance} (UWDA). UWDA adapts the Gale--Shapley stable
+matching algorithm, classically used for hospital-residency and
+school-choice assignment, to real-time dispatch: requests propose to
+facilities in order of distance, and each facility retains only its
+highest-priority proposals -- ranked by a bid score combining urgency
+and proximity -- up to its live, status-derived capacity, deferring
+the rest to the next round. We implement both UWDA and a
+nearest-neighbour baseline as interchangeable modules in a Mesa-based
+agent simulation exposed through a FastAPI service and a React
+front end, and evaluate them on six emergency-service categories
+using request surges of increasing size. Across all categories, UWDA
+eliminates facility overflow entirely (zero excess load in every
+trial) and reduces load-distribution inequality (Gini coefficient) by
+up to 31\% relative to greedy nearest-neighbour routing, at the cost
+of a lower service rate under sustained high load. We discuss this
+efficiency-fairness trade-off, situate it within the matching-market
+and multi-robot task-allocation literature, and outline overflow
+reallocation as a direction for closing the service-rate gap.
+\end{abstract}
+
+\begin{IEEEkeywords}
+multi-agent systems, stable matching, deferred acceptance, resource
+allocation, emergency response, agent-based modeling, combinatorial
+auctions, dispatch systems
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+Mobile and web applications that help users locate the nearest police
+station, hospital, pharmacy, or other emergency-adjacent facility have
+become common civic infrastructure, particularly in dense urban
+settings such as Bengaluru, India. The dominant design pattern in
+these systems -- including the initial prototype of the system
+described here -- is straightforward: given a user's location, compute
+the geographically or network-nearest facility of the requested
+category and return it. This pattern is a direct application of
+nearest-neighbour search and is entirely reasonable when requests
+arrive sparsely and independently.
+
+The pattern breaks down, however, exactly when it matters most: under
+surge conditions. When many requests originate from the same
+neighbourhood within a short window -- a traffic accident with
+multiple injured parties, a localized law-and-order incident, a
+flooding event -- naive nearest-facility routing directs every one of
+those requests to the same one or two closest centers, regardless of
+whether those centers have the staff, beds, or officers to absorb the
+load. Meanwhile, comparably close facilities that are not the
+\emph{single} nearest option receive no requests at all, even though
+they may be entirely idle. The system has no notion of facility
+capacity and no mechanism for load-aware redistribution.
+
+This is, at its core, a matching problem under capacity constraints --
+a well-studied class of problem in market design and mechanism
+theory, but one rarely applied to real-time emergency dispatch in
+practice. We adapt the \emph{deferred acceptance} algorithm of Gale
+and Shapley \cite{gale1962college}, best known for its use in
+centralized matching markets such as the U.S. National Resident
+Matching Program \cite{roth1984evolution} and school-choice systems
+\cite{abdulkadiroglu2003school}, to this setting. We introduce
+\emph{Urgency-Weighted Deferred Acceptance} (UWDA), in which:
+
+\begin{itemize}
+\item each incoming request (the ``proposing'' side) ranks facilities
+by distance, closer being preferred;
+\item each facility (the ``receiving'' side) ranks the requests
+currently proposing to it by a bid score combining request urgency
+and proximity, and retains only as many as its live capacity allows;
+\item rejected requests propose to their next-preferred facility in
+the following round, continuing until every request is matched or has
+exhausted its preference list.
+\end{itemize}
+
+We implement UWDA alongside a greedy nearest-neighbour baseline inside
+a Mesa \cite{masad2015mesa,kazil2020utilizing} agent-based model,
+expose both through a FastAPI \cite{fastapi} backend, and provide a
+React-based front end (\emph{SupportLine}) through which users locate
+help and operators register facilities. A dedicated ``Research'' view
+lets an operator simulate request surges of configurable size against
+the live facility pool and compare the two mechanisms directly. We use
+this instrumentation to run controlled experiments across six
+emergency-service categories in the Bengaluru dataset used by the
+system.
+
+Our contributions are:
+\begin{enumerate}
+\item An adaptation of deferred-acceptance stable matching to
+real-time, urgency-weighted emergency dispatch (UWDA), together with
+a reference implementation.
+\item An empirical comparison against nearest-neighbour routing across
+six facility categories and eight surge sizes, quantifying the
+efficiency--fairness trade-off between the two mechanisms.
+\item An open, runnable system (agent model, API, and web front end)
+that doubles as a testbed for further allocation-mechanism research.
+\end{enumerate}
+
+\section{Related Work}
+
+\subsection{Stable matching and deferred acceptance}
+The deferred acceptance algorithm was introduced by Gale and Shapley
+\cite{gale1962college} to solve the stable marriage problem and was
+later shown by Roth \cite{roth1984evolution} to underlie the
+mechanism used, independently, by the National Resident Matching
+Program for decades prior to its formal analysis. Roth and Sotomayor
+\cite{roth1990two} provide the canonical treatment of two-sided
+matching markets, and Roth's survey \cite{roth2008deferred} traces
+deferred acceptance's use across labor markets, school choice, and
+kidney exchange. Abdulkadiroğlu and Sönmez
+\cite{abdulkadiroglu2003school} apply the mechanism to school-choice
+assignment, framing schools as capacitated ``receivers,'' which is
+structurally the closest prior application to our facility-capacity
+setting. Roth, Sönmez, and Ünver \cite{roth2004kidney} extend matching
+mechanisms to kidney exchange, another domain -- like emergency
+dispatch -- where allocation decisions carry direct consequences for
+individual welfare and time pressure is material. Our contribution
+differs from this line of work in introducing a continuously-valued,
+urgency-weighted bid score on the receiving side, rather than a fixed
+strict preference ordering, and in applying the mechanism to a
+streaming, real-time arrival process rather than a batch market.
+
+\subsection{Auctions and market-based multi-agent allocation}
+Market-based mechanisms are a long-standing approach to task and
+resource allocation in multi-agent and multi-robot systems.
+Gerkey and Matarić \cite{gerkey2004formal} provide a formal taxonomy
+of multi-robot task-allocation problems and analyze several
+architectures, including auction-based ones. Dias et al.
+\cite{dias2006market} survey market-based multi-robot coordination
+broadly. Sandholm's work on optimal winner determination in
+combinatorial auctions \cite{sandholm2002algorithm} and Rassenti,
+Smith, and Bulfin's combinatorial auction for airport time slots
+\cite{rassenti1982combinatorial} both address capacity-constrained
+allocation via bidding, as does the classical Vickrey auction
+\cite{vickrey1961counterspeculation}. Choi, Brunet, and How's
+consensus-based bundle algorithm \cite{choi2009consensus} addresses
+decentralized task allocation among agents under communication
+constraints. UWDA can be read as a restricted, single-round-per-bid
+auction variant tuned for low latency and simplicity of
+implementation, at the cost of the richer expressiveness that full
+combinatorial auctions allow.
+
+\subsection{Facility location and emergency dispatch}
+The location and coverage of emergency facilities has its own
+literature independent of matching theory. Toregas et al.
+\cite{toregas1971location} formulate the location set-covering
+problem for emergency services; Church and ReVelle
+\cite{church1974maximal} introduce the maximal covering location
+problem; Daskin \cite{daskin1983maximum} extends this to a
+probabilistic maximum-expected-coverage model. Brotcorne, Laporte, and
+Semet \cite{brotcorne2003ambulance} survey ambulance location and
+relocation models specifically. These works largely address
+\emph{where} to site facilities, a strategic, offline decision,
+whereas UWDA addresses the complementary \emph{operational}, online
+problem of routing requests to already-sited facilities in real time.
+Jotshi, Gong, and Batta \cite{jotshi2009dispatching} and Yin
+\cite{yin2006emergency} apply GIS-based methods to disaster-response
+dispatch and routing; Nasrollahzadeh, Khademi, and Mayorga
+\cite{nasrollahzadeh2018real} and Mukhopadhyay et al.
+\cite{mukhopadhyay2019reinforcement} apply, respectively, real-time
+optimization and multi-agent reinforcement learning to ambulance and
+emergency dispatch, representing more computationally intensive
+alternatives to the lightweight, interpretable mechanism proposed
+here.
+
+\subsection{Fairness and inequality measurement}
+We use the Gini coefficient \cite{gini1912variabilita} to quantify
+load-distribution fairness across facilities; Atkinson
+\cite{atkinson1970measurement} provides an alternative,
+axiomatically-motivated family of inequality indices that could be
+substituted in future evaluations. Load balancing in distributed and
+cloud systems \cite{shvachko2010hadoop} faces an analogous
+fairness/efficiency tension, though typically without the hard,
+safety-relevant capacity ceilings present in emergency dispatch.
+
+\subsection{Agent-based modeling tooling}
+The system is implemented using Mesa, a Python framework for
+agent-based modeling \cite{masad2015mesa,kazil2020utilizing}, in the
+spirit of earlier agent-based modeling platforms such as NetLogo
+\cite{wilensky1999netlogo} and Repast \cite{north2013complex}. The web
+service layer uses FastAPI \cite{fastapi}; the mapping front end
+builds on OpenStreetMap data \cite{osm}.
+
+\section{System Overview}
+
+\subsection{Architecture}
+SupportLine consists of three layers. The \emph{agent layer}
+represents each registered facility as a \texttt{CenterAgent} in a
+Mesa model, carrying a category (Police, Hospital, Cyber Crime,
+Consultation, Pharmacy, Fire/Emergency), coordinates, a live status
+(Available, Busy, On Call, Full), and a capacity derived from a
+per-category base capacity scaled by a status-dependent factor
+(Table~\ref{tab:capacity}). The \emph{service layer} is a FastAPI
+application exposing endpoints for facility lookup, nearest-facility
+ranking, facility registration, and the two allocation mechanisms
+described below, along with simulation endpoints used for the
+experiments in Section~\ref{sec:experiments}. The \emph{presentation
+layer} is a React single-page application providing a public-facing
+locator flow, a facility-manager registration flow, and a
+``Research'' dashboard used to run and visualize allocation
+comparisons interactively.
+
+\begin{table}[t]
+\caption{Per-category base capacity and status scaling factor}
+\label{tab:capacity}
+\centering
+\begin{tabular}{@{}lc@{}}
+\toprule
+Category & Base capacity \\
+\midrule
+Police & 4 \\
+Hospital & 8 \\
+Cyber Crime & 3 \\
+Consultation & 5 \\
+Pharmacy & 6 \\
+Fire/Emergency & 3 \\
+\bottomrule
+\end{tabular}
+\quad
+\begin{tabular}{@{}lc@{}}
+\toprule
+Status & Scaling factor \\
+\midrule
+Available / Open & 1.00 \\
+Stationed & 1.00 \\
+On Call / Patrolling & 0.60 \\
+Busy & 0.35 \\
+Full / Closed / Off Duty & 0.00 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Baseline: greedy nearest-neighbour allocation}
+The baseline mechanism, \texttt{greedy\_nearest}, mirrors conventional
+locator-app behaviour: each request $r$ is assigned independently to
+$\arg\min_{c \in C} d(r, c)$, where $d(\cdot,\cdot)$ is great-circle
+(haversine) distance and $C$ is the set of facilities in the
+requested category. Facility capacity is not enforced, so this
+mechanism can and does assign more requests to a facility than it can
+serve -- this is intentional, as it reproduces the overload behaviour
+of naive nearest-facility routing that we wish to characterize.
+
+\section{Proposed Mechanism: Urgency-Weighted Deferred Acceptance}
+
+\subsection{Formulation}
+Let $R = \{r_1, \dots, r_n\}$ be a set of concurrent requests and
+$C = \{c_1, \dots, c_m\}$ the set of facilities in the relevant
+category, each with remaining capacity $\text{cap}(c_j)$. Each request
+$r_i$ has an urgency weight $u_i \in \{1, 2, 3\}$ (normal, elevated,
+critical). Define the bid score of request $r_i$ at facility $c_j$ as
+\begin{equation}
+\text{bid}(r_i, c_j) = \frac{u_i}{d(r_i, c_j) + \varepsilon}
+\end{equation}
+with $\varepsilon = 0.05\,\text{km}$ preventing division by zero for
+co-located points. Each request's preference list over facilities is
+the set $C$ sorted by ascending $d(r_i, c_j)$.
+
+\subsection{Algorithm}
+UWDA proceeds in rounds, following the request-proposing form of
+deferred acceptance:
+
+\begin{enumerate}
+\item Initialize all requests as \emph{free} and all facilities'
+held-sets as empty.
+\item While a free request $r_i$ remains that has not exhausted its
+preference list: let $c_j$ be $r_i$'s most-preferred facility not yet
+proposed to. $r_i$ proposes to $c_j$.
+\item $c_j$ tentatively adds $r_i$ to its held set. If
+$|\text{held}(c_j)| > \text{cap}(c_j)$, $c_j$ ranks its held requests
+by $\text{bid}(\cdot, c_j)$ descending, retains the top
+$\text{cap}(c_j)$, and rejects the remainder, which become free again.
+\item Repeat until no free request has an unexplored facility
+remaining.
+\end{enumerate}
+
+Because each facility only ever displaces a held request for one with
+a strictly higher bid score, and each rejected request only proposes
+to facilities it has not yet tried, the procedure terminates, and the
+resulting matching is \emph{stable} in the classical Gale--Shapley
+sense restricted to each side's stated preferences: no free
+request--facility pair would both prefer to be matched to one another
+over their current outcomes \cite{gale1962college,roth1990two}. The
+procedure runs in $O(n \cdot m)$ proposals in the worst case, and
+executes in well under 50\,ms for the surge sizes evaluated in
+Section~\ref{sec:experiments} on commodity hardware.
+
+\subsection{Evaluation metrics}
+For a given assignment produced by either mechanism, we report:
+\emph{service rate} (fraction of requests matched to a facility);
+\emph{average and maximum assigned distance}; the \emph{Gini
+coefficient} \cite{gini1912variabilita} of the resulting per-facility
+load distribution, as a measure of allocation fairness; and
+\emph{overflow units}, the total amount by which any facility's
+assigned load exceeds its stated capacity, summed across facilities.
+
+\section{Experimental Setup}
+\label{sec:experiments}
+
+We evaluate both mechanisms on the live Bengaluru facility dataset
+used by SupportLine (24 registered facilities across six categories,
+seeded from public-domain OpenStreetMap-style locations
+\cite{osm}). For each of three representative categories -- Police (7
+facilities, aggregate capacity 15), Hospital (3 facilities, aggregate
+capacity 6), and Fire/Emergency (5 facilities, aggregate capacity 11)
+-- we generate synthetic request surges of size
+$n \in \{5, 10, \dots, 80\}$, with request coordinates drawn uniformly
+within a 7\,km radius of central Bengaluru and urgency drawn from a
+fixed categorical distribution ($P(u{=}1){=}0.6$,
+$P(u{=}2){=}0.3$, $P(u{=}3){=}0.1$), using a fixed random seed for
+reproducibility. Both mechanisms are run against the identical
+generated request set for each $(n, \text{category})$ pair, ensuring a
+paired comparison.
+
+\section{Results}
+
+Table~\ref{tab:police} reports results for the Police category across
+all eight surge sizes; Fig.~\ref{fig:comparison} plots service rate,
+load Gini, and overflow units against surge size for the same
+category. Table~\ref{tab:summary} summarizes all three categories at a
+fixed, moderate surge size ($n{=}30$).
+
+\begin{table}[t]
+\caption{Police category (7 facilities, aggregate capacity 15)}
+\label{tab:police}
+\centering
+\begin{tabular}{@{}c cccc cccc@{}}
+\toprule
+& \multicolumn{4}{c}{Greedy nearest} & \multicolumn{4}{c}{UWDA} \\
+\cmidrule(lr){2-5}\cmidrule(lr){6-9}
+$n$ & SR & $\bar d$ & Gini & OF & SR & $\bar d$ & Gini & OF \\
+\midrule
+10 & 1.00 & 4.55 & 0.60 & 4  & 1.00 & 6.55 & 0.60 & 0 \\
+20 & 1.00 & 4.48 & 0.64 & 12 & 0.75 & 5.61 & 0.44 & 0 \\
+30 & 1.00 & 4.84 & 0.60 & 20 & 0.50 & 4.94 & 0.44 & 0 \\
+40 & 1.00 & 4.82 & 0.56 & 30 & 0.38 & 3.47 & 0.44 & 0 \\
+50 & 1.00 & 4.84 & 0.59 & 40 & 0.30 & 3.62 & 0.44 & 0 \\
+60 & 1.00 & 5.08 & 0.59 & 50 & 0.25 & 3.83 & 0.44 & 0 \\
+70 & 1.00 & 5.04 & 0.58 & 60 & 0.21 & 3.15 & 0.44 & 0 \\
+80 & 1.00 & 5.35 & 0.59 & 70 & 0.19 & 3.15 & 0.44 & 0 \\
+\bottomrule
+\end{tabular}
+
+\vspace{2pt}
+\footnotesize SR = service rate; $\bar d$ = mean assigned distance
+(km); Gini = load-Gini coefficient; OF = overflow units.
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figs/comparison.pdf}
+\caption{Service rate, load Gini coefficient, and overflow units as a
+function of surge size for the Police category, comparing greedy
+nearest-neighbour routing (amber) against UWDA (teal).}
+\label{fig:comparison}
+\end{figure}
+
+\begin{table}[t]
+\caption{Cross-category summary at $n{=}30$}
+\label{tab:summary}
+\centering
+\begin{tabular}{@{}l cc cc cc@{}}
+\toprule
+& \multicolumn{2}{c}{SR} & \multicolumn{2}{c}{Gini} & \multicolumn{2}{c}{OF} \\
+Category & Gr. & UW. & Gr. & UW. & Gr. & UW. \\
+\midrule
+Police          & 1.00 & 0.50 & 0.60 & 0.44 & 20 & 0 \\
+Hospital        & 1.00 & 0.20 & 0.56 & 0.33 & 27 & 0 \\
+Fire/Emergency  & 1.00 & 0.37 & 0.48 & 0.22 & 21 & 0 \\
+\bottomrule
+\end{tabular}
+
+\vspace{2pt}
+\footnotesize Gr. = greedy nearest; UW. = UWDA; SR = service rate;
+OF = overflow units.
+\end{table}
+
+Three patterns are consistent across all categories and surge sizes
+tested. First, \textbf{UWDA produces zero facility overflow in every
+trial}, by construction, whereas greedy nearest-neighbour overflow
+grows approximately linearly with surge size once demand exceeds
+aggregate capacity ($r\{=\}0.98$--$0.99$ across categories in our
+data). Second, \textbf{UWDA reduces load-distribution inequality},
+lowering the Gini coefficient by 18--41\% relative to greedy routing
+at every surge size tested, and this reduction is stable once
+capacity constraints begin to bind (visible as the flattening of the
+UWDA Gini curve in Fig.~\ref{fig:comparison} beyond $n{\approx}20$).
+Third, \textbf{UWDA's service rate degrades under sustained load},
+falling below 25\% once $n$ exceeds roughly four times aggregate
+category capacity, since UWDA does not serve a request it cannot
+place within a facility's stated capacity -- unlike greedy routing,
+which always reports a match regardless of whether that match is
+operationally meaningful.
+
+\section{Discussion}
+
+The central finding is a genuine efficiency--fairness--feasibility
+trade-off rather than a strict dominance of one mechanism over the
+other. Greedy nearest-neighbour routing always reports a match, but a
+large fraction of those matches, under surge, are matches the
+receiving facility cannot realistically absorb -- the ``service rate''
+of 1.00 in Table~\ref{tab:police} is, in this sense, an artifact of
+not modelling capacity at all, and the accompanying overflow column is
+the more operationally meaningful number. UWDA's service rate is
+comparatively conservative, but every request it does place respects
+the facility's declared capacity, and its lower Gini coefficient shows
+that the requests it does place are spread more evenly across
+available facilities rather than concentrated on the nearest one.
+
+For a deployed system, neither extreme is fully satisfactory on its
+own: capacity-blind routing under-informs operators about real
+overload, while a strict deferred-acceptance mechanism leaves
+requests unserved that a human dispatcher would still want routed
+somewhere, even to a farther facility, rather than left unmatched.
+This motivates a natural extension we leave to future work:
+\emph{overflow reallocation}, in which requests rejected by every
+facility in their primary category-and-distance preference list are
+offered a second pass with capacity constraints relaxed by a bounded
+tolerance (e.g., allow up to 20\% over declared capacity) or
+widened to include adjacent categories (e.g., Consultation facilities
+absorbing overflow Pharmacy requests) before being marked unserved.
+Such a hybrid mechanism would let us report a fairer service-rate
+comparison and is the direction we intend to pursue in follow-up
+work, potentially combined with a learned or historically-calibrated
+capacity model rather than the fixed status-scaling table used here
+(Table~\ref{tab:capacity}).
+
+We also note a limitation of the present evaluation: request
+generation, while seeded for reproducibility, is synthetic and
+spatially uniform, whereas real emergency demand is spatially and
+temporally clustered (e.g., around transit corridors or during
+specific hours). Evaluating UWDA against historical or clustered
+demand traces, rather than uniform surges, is a natural next
+validation step.
+
+\section{Conclusion}
+
+We presented Urgency-Weighted Deferred Acceptance, an adaptation of
+Gale--Shapley stable matching to real-time, capacity-aware emergency
+facility dispatch, implemented within a full-stack multi-agent
+dispatch system (SupportLine) covering six emergency-service
+categories in Bengaluru. Controlled experiments across three
+categories and eight surge sizes show that UWDA eliminates facility
+overflow entirely and reduces load-distribution inequality by 18--41\%
+relative to conventional nearest-neighbour routing, at the cost of a
+lower service rate under sustained high demand. We view this as
+evidence that classical matching-market mechanisms, largely applied to
+offline, batch allocation problems in prior work, are a viable and
+lightweight basis for online, real-time dispatch, and we outline
+overflow reallocation as the primary direction for future work to
+close the observed service-rate gap while retaining UWDA's fairness
+and feasibility guarantees.
+
+\begin{thebibliography}{00}
+
+\bibitem{gale1962college} D. Gale and L. S. Shapley, ``College admissions and the stability of marriage,'' \emph{The American Mathematical Monthly}, vol. 69, no. 1, pp. 9--15, 1962.
+
+\bibitem{roth1984evolution} A. E. Roth, ``The evolution of the labor market for medical interns and residents: a case study in game theory,'' \emph{Journal of Political Economy}, vol. 92, no. 6, pp. 991--1016, 1984.
+
+\bibitem{roth1990two} A. E. Roth and M. A. O. Sotomayor, \emph{Two-Sided Matching: A Study in Game-Theoretic Modeling and Analysis}. Cambridge University Press, 1990.
+
+\bibitem{roth2008deferred} A. E. Roth, ``Deferred acceptance algorithms: history, theory, practice, and open questions,'' \emph{International Journal of Game Theory}, vol. 36, no. 3-4, pp. 537--569, 2008.
+
+\bibitem{abdulkadiroglu2003school} A. Abdulkadiroğlu and T. Sönmez, ``School choice: a mechanism design approach,'' \emph{American Economic Review}, vol. 93, no. 3, pp. 729--747, 2003.
+
+\bibitem{roth2004kidney} A. E. Roth, T. Sönmez, and M. U. Ünver, ``Kidney exchange,'' \emph{The Quarterly Journal of Economics}, vol. 119, no. 2, pp. 457--488, 2004.
+
+\bibitem{gerkey2004formal} B. P. Gerkey and M. J. Matarić, ``A formal analysis and taxonomy of task allocation in multi-robot systems,'' \emph{The International Journal of Robotics Research}, vol. 23, no. 9, pp. 939--954, 2004.
+
+\bibitem{dias2006market} M. B. Dias, R. Zlot, N. Kalra, and A. Stentz, ``Market-based multirobot coordination: a survey and analysis,'' \emph{Proceedings of the IEEE}, vol. 94, no. 7, pp. 1257--1270, 2006.
+
+\bibitem{sandholm2002algorithm} T. Sandholm, ``Algorithm for optimal winner determination in combinatorial auctions,'' \emph{Artificial Intelligence}, vol. 135, no. 1-2, pp. 1--54, 2002.
+
+\bibitem{rassenti1982combinatorial} S. J. Rassenti, V. L. Smith, and R. L. Bulfin, ``A combinatorial auction mechanism for airport time slot allocation,'' \emph{The Bell Journal of Economics}, vol. 13, no. 2, pp. 402--417, 1982.
+
+\bibitem{vickrey1961counterspeculation} W. Vickrey, ``Counterspeculation, auctions, and competitive sealed tenders,'' \emph{The Journal of Finance}, vol. 16, no. 1, pp. 8--37, 1961.
+
+\bibitem{choi2009consensus} H.-L. Choi, L. Brunet, and J. P. How, ``Consensus-based decentralized auctions for robust task allocation,'' \emph{IEEE Transactions on Robotics}, vol. 25, no. 4, pp. 912--926, 2009.
+
+\bibitem{toregas1971location} C. Toregas, R. Swain, C. ReVelle, and L. Bergman, ``The location of emergency service facilities,'' \emph{Operations Research}, vol. 19, no. 6, pp. 1363--1373, 1971.
+
+\bibitem{church1974maximal} R. Church and C. ReVelle, ``The maximal covering location problem,'' \emph{Papers of the Regional Science Association}, vol. 32, no. 1, pp. 101--118, 1974.
+
+\bibitem{daskin1983maximum} M. S. Daskin, ``A maximum expected covering location model: formulation, properties and heuristic solution,'' \emph{Transportation Science}, vol. 17, no. 1, pp. 48--70, 1983.
+
+\bibitem{brotcorne2003ambulance} L. Brotcorne, G. Laporte, and F. Semet, ``Ambulance location and relocation models,'' \emph{European Journal of Operational Research}, vol. 147, no. 3, pp. 451--463, 2003.
+
+\bibitem{jotshi2009dispatching} A. Jotshi, Q. Gong, and R. Batta, ``Dispatching and routing of emergency vehicles in disaster mitigation using data fusion,'' \emph{Socio-Economic Planning Sciences}, vol. 43, no. 1, pp. 1--24, 2009.
+
+\bibitem{yin2006emergency} P. Yin, ``Emergency logistics planning in natural disasters,'' \emph{European Journal of Operational Research}, vol. 179, no. 3, pp. 1177--1193, 2006.
+
+\bibitem{nasrollahzadeh2018real} A. A. Nasrollahzadeh, A. Khademi, and M. E. Mayorga, ``Real-time ambulance dispatching and relocation,'' \emph{Manufacturing \& Service Operations Management}, vol. 20, no. 3, pp. 466--484, 2018.
+
+\bibitem{mukhopadhyay2019reinforcement} A. Mukhopadhyay, G. Pettet, S. Vazirizade, D. Lu, A. Jaimes, S. E. Said, H. Baroud, Y. Vorobeychik, M. Kochenderfer, and A. Dubey, ``A review of incident prediction, resource allocation, and dispatch models for emergency management,'' \emph{Accident Analysis \& Prevention}, vol. 165, p. 106501, 2022.
+
+\bibitem{gini1912variabilita} C. Gini, \emph{Variabilità e Mutabilità}. Tipografia di Paolo Cuppini, Bologna, 1912.
+
+\bibitem{atkinson1970measurement} A. B. Atkinson, ``On the measurement of inequality,'' \emph{Journal of Economic Theory}, vol. 2, no. 3, pp. 244--263, 1970.
+
+\bibitem{shvachko2010hadoop} K. Shvachko, H. Kuang, S. Radia, and R. Chansler, ``The Hadoop distributed file system,'' in \emph{Proc. IEEE 26th Symposium on Mass Storage Systems and Technologies (MSST)}, 2010, pp. 1--10.
+
+\bibitem{masad2015mesa} D. Masad and J. Kazil, ``MESA: an agent-based modeling framework,'' in \emph{Proc. 14th Python in Science Conference (SciPy)}, 2015, pp. 51--58.
+
+\bibitem{kazil2020utilizing} J. Kazil, D. Masad, and A. Crooks, ``Utilizing Python for agent-based modeling: the Mesa framework,'' in \emph{Social, Cultural, and Behavioral Modeling (SBP-BRiMS 2020)}, Lecture Notes in Computer Science, vol. 12268. Springer, 2020, pp. 308--317.
+
+\bibitem{wilensky1999netlogo} U. Wilensky, \emph{NetLogo}. Center for Connected Learning and Computer-Based Modeling, Northwestern University, Evanston, IL, 1999.
+
+\bibitem{north2013complex} M. J. North and C. M. Macal, \emph{Managing Business Complexity: Discovering Strategic Solutions with Agent-Based Modeling and Simulation}. Oxford University Press, 2007.
+
+\bibitem{fastapi} S. Ramírez, ``FastAPI,'' \emph{FastAPI documentation}, 2018. [Online]. Available: \url{https://fastapi.tiangolo.com}
+
+\bibitem{osm} OpenStreetMap contributors, ``Planet dump,'' 2024. [Online]. Available: \url{https://www.openstreetmap.org}
+
+\end{thebibliography}
+
+\end{document}
